@@ -30,10 +30,19 @@ from .geometry import COLS, FPS, ROWS, chest_distance
 Rows = tuple[tuple[tuple[int, int, int], ...], ...]
 
 # Palettes. Heart stays blood-coloured; breath carries the emotional state.
+#
+# Breath needs THREE stops, not two. Interpolating hot orange straight to cyan
+# in RGB runs the midpoint through grey - they are near-complementary, so the
+# channels cross over and cancel - and a facade that desaturates to concrete
+# colour exactly during the transition is the worst possible time to lose it.
+# The violet stop keeps the whole arc saturated.
 BREATH_AGITATED = (255, 96, 40)
+BREATH_MID = (186, 72, 196)
 BREATH_CALM = (26, 176, 196)
 HEART_AGITATED = (255, 28, 44)
 HEART_CALM = (255, 96, 122)
+
+CENTER_COL = (COLS - 1) / 2
 
 PULSE_TRAVEL = 0.16  # fraction of a cardiac cycle for the wave to reach the crown
 FILL_SOFTNESS = 1.6  # rows over which the lung's waterline ramps
@@ -61,6 +70,31 @@ def _mix(c0: tuple[int, int, int], c1: tuple[int, int, int], t: float):
     return tuple(_lerp(c0[i], c1[i], t) for i in range(3))
 
 
+def _ramp(stops, t: float):
+    """Piecewise mix across an arbitrary number of colour stops."""
+    t = max(0.0, min(1.0, t)) * (len(stops) - 1)
+    i = min(int(t), len(stops) - 2)
+    return _mix(stops[i], stops[i + 1], t - i)
+
+
+def _heart_profile(col: int) -> float:
+    """The pulse runs strongest up the tower's centre line and falls away
+    toward the outer bays.
+
+    Without this every column in a row is identical and the facade reads as
+    seventeen horizontal stripes - a barcode, not a body - which throws away
+    eight ninths of the horizontal resolution we actually have.
+    """
+    d = abs(col - CENTER_COL) / CENTER_COL
+    return 1.0 - 0.5 * d**1.4
+
+
+def _breath_profile(col: int) -> float:
+    """A lung fills fairly evenly; a little edge falloff gives it volume."""
+    d = abs(col - CENTER_COL) / CENTER_COL
+    return 1.0 - 0.20 * d * d
+
+
 def _circular_gauss(p: float, mu: float, sigma: float) -> float:
     d = abs(p - mu)
     d = min(d, 1.0 - d)  # the cycle wraps
@@ -69,8 +103,14 @@ def _circular_gauss(p: float, mu: float, sigma: float) -> float:
 
 def lubdub(p: float) -> float:
     """Cardiac envelope over one normalised cycle. First sound, then the
-    quieter second sound about a third of the way through."""
-    return _circular_gauss(p, 0.0, 0.045) + 0.62 * _circular_gauss(p, 0.30, 0.055)
+    quieter second sound about a third of the way through.
+
+    Deliberately wider than a real heart sound. At 72 BPM one cycle is 25
+    frames, so a physiologically honest sigma puts the whole `lub` inside a
+    single 33ms frame - one frame of light at a quarter mile is not a
+    heartbeat, it is a glitch.
+    """
+    return _circular_gauss(p, 0.0, 0.060) + 0.62 * _circular_gauss(p, 0.30, 0.070)
 
 
 def breath_level(q: float) -> float:
@@ -137,7 +177,7 @@ class Sync:
         waterline = (ROWS - 1) * (1.0 - level)
 
         calm = max(0.0, min(1.0, e.calm + 0.25 * e.palette_bias))
-        breath_rgb = _mix(BREATH_AGITATED, BREATH_CALM, calm)
+        breath_rgb = _ramp((BREATH_AGITATED, BREATH_MID, BREATH_CALM), calm)
         heart_rgb = _mix(HEART_AGITATED, HEART_CALM, calm)
 
         # The crossover. As the facade takes the lead, the borrowed heartbeat
@@ -163,10 +203,13 @@ class Sync:
 
             row = []
             for c in range(COLS):
+                h_col = _heart_profile(c)
+                b_col = _breath_profile(c)
                 jitter = 1.0 + agitation * _smooth_noise(r, c, t)
                 k = gain * jitter
                 px = tuple(
-                    heart_rgb[i] * heart * w_heart + breath_rgb[i] * breath * w_breath
+                    heart_rgb[i] * heart * w_heart * h_col
+                    + breath_rgb[i] * breath * w_breath * b_col
                     for i in range(3)
                 )
                 row.append(tuple(max(0, min(255, int(v * k))) for v in px))
@@ -181,6 +224,13 @@ class Sync:
         for r in range(ROWS):
             falloff = 1.0 - 0.6 * chest_distance(r)
             k = 0.05 + 0.09 * phase * falloff
-            px = tuple(max(0, min(255, int(BREATH_CALM[i] * k))) for i in range(3))
-            rows.append(tuple(px for _ in range(COLS)))
+            rows.append(
+                tuple(
+                    tuple(
+                        max(0, min(255, int(BREATH_CALM[i] * k * _breath_profile(c))))
+                        for i in range(3)
+                    )
+                    for c in range(COLS)
+                )
+            )
         return tuple(rows)
