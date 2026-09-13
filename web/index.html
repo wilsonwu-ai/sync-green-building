@@ -17,8 +17,8 @@
 
   <section id="stage-intro" class="card">
     <ol class="steps">
-      <li>Cover the <strong>rear camera and the flash</strong> with one fingertip.</li>
-      <li>Press gently. Hold still for 25 seconds.</li>
+      <li>SYNC picks the brightest lamp your phone has: the <strong>rear camera and flash</strong>, or the <strong>front camera lit by the screen</strong>. It tells you which lens to cover before the clock starts.</li>
+      <li>One fingertip on that lens. Press gently, hold still for 25 seconds.</li>
       <li>Watch 153 windows start beating at your rate.</li>
     </ol>
     <button id="begin" class="primary">Take my pulse</button>
@@ -36,8 +36,9 @@
         <small>seconds</small>
       </div>
     </div>
+    <p id="mode-line" class="mode-line">Opening the camera.</p>
     <canvas id="trace" class="trace" width="600" height="120"></canvas>
-    <p id="measure-hint" class="hint">Hold still. Keep the lens fully covered.</p>
+    <p id="measure-hint" class="hint"></p>
     <video id="cam" playsinline muted></video>
     <canvas id="work" hidden></canvas>
   </section>

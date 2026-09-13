@@ -145,3 +145,34 @@ h2 { margin: 0 0 10px; font-size: 30px; font-weight: 750; }
 .delta .cap { color: var(--dim); font-size: 13px; margin-top: 4px; }
 
 .bad { color: var(--warn); }
+
+/* Which lens to cover. Louder than .hint because it is the one instruction a
+   participant has to get right, and it changes between phones. */
+.mode-line {
+  margin: 0 0 14px;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+/* Screen as lamp. On a phone with no torch the display IS the light source, so
+   for the 25 seconds of capture the page turns white and the dark theme is
+   inverted in place. Everything here is scoped to .lamp, which app.js removes
+   the moment the capture ends. */
+body.lamp {
+  --panel: #ffffff;
+  --line: #ccd6e4;
+  --ink: #06090f;
+  --dim: #55627a;
+  background: #ffffff;
+}
+body.lamp .card {
+  background: #ffffff;
+  border-color: var(--line);
+}
+body.lamp .ring-bg { stroke: #d7deea; }
+body.lamp .trace { opacity: 1; }
+body.lamp .fineprint { color: #6b7890; }
+body.lamp .bad { color: #a85f00; }

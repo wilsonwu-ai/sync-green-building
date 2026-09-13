@@ -32,10 +32,27 @@ import logging
 import time
 from dataclasses import dataclass
 
+try:
+    # Imported at module scope on purpose. This used to live inside the try
+    # block in _refresh, where a failed import left the name unbound and the
+    # `except anthropic.X` clauses raised NameError *while handling the
+    # original error* - the one failure shape that kills the task outright
+    # instead of falling back.
+    import anthropic
+except Exception:  # noqa: BLE001 - a broken SDK install must not stop the show
+    anthropic = None
+
 log = logging.getLogger("sync.appraisal")
 
 MODEL = "claude-opus-5"
 CADENCE_S = 20.0
+
+# Opus 5 thinks by default and thinking tokens come out of max_tokens. The
+# JSON we want back is ~60 tokens; the rest is headroom so the model cannot
+# spend the entire budget reasoning and hand back a response carrying no text
+# block at all. That truncation is invisible - it arrives as a 200 with an
+# empty content list, which reads exactly like a malformed reply.
+MAX_TOKENS = 2000
 
 SYSTEM = """You are the interior life of the MIT Green Building during a live \
 installation called SYNC.
@@ -105,6 +122,16 @@ def _extract(text: str) -> dict:
     return json.loads(text[start : end + 1])
 
 
+def _reap(task: asyncio.Task) -> None:
+    """Retrieve a fire-and-forget task's exception so the failure is loud here
+    rather than silent now and noisy at interpreter exit."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        log.warning("appraisal task died: %r", exc)
+
+
 class Appraiser:
     def __init__(self, enabled: bool = True, cadence_s: float = CADENCE_S) -> None:
         self.cadence_s = cadence_s
@@ -119,8 +146,6 @@ class Appraiser:
             self.last_error = "disabled by flag"
             return
         try:
-            import anthropic
-
             # Resolves ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, or an
             # `ant auth login` profile. A missing env var is not a missing
             # credential, so we construct and let the first call decide.
@@ -142,7 +167,21 @@ class Appraiser:
         if not self.available:
             self.current = _fallback(snap, pacing)
             return
-        self._task = asyncio.create_task(self._refresh(snap, pacing))
+        # Ask for the loop before building the coroutine. create_task raises
+        # when there is no running loop, and by then the coroutine object
+        # already exists and dies unawaited - a leak with its own warning.
+        # The render loop is async so this should not happen, but "should
+        # not" is no reason for this call to be able to kill its caller.
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.last_error = "no running event loop"
+            self.current = _fallback(snap, pacing)
+            return
+        self._task = loop.create_task(self._refresh(snap, pacing))
+        # _refresh swallows its own failures, but a task whose exception
+        # nobody retrieves is a silent death plus a noisy warning at exit.
+        self._task.add_done_callback(_reap)
 
     async def _refresh(self, snap, pacing) -> None:
         state = {
@@ -156,11 +195,9 @@ class Appraiser:
             "breath_rate_per_min": round(pacing.breath_rate, 1),
         }
         try:
-            import anthropic
-
             resp = await self._client.messages.create(
                 model=MODEL,
-                max_tokens=700,
+                max_tokens=MAX_TOKENS,
                 system=SYSTEM,
                 output_config={"effort": "low"},
                 messages=[{"role": "user", "content": json.dumps(state)}],
@@ -168,6 +205,11 @@ class Appraiser:
             if resp.stop_reason == "refusal":
                 raise RuntimeError("refused")
             text = next((b.text for b in resp.content if b.type == "text"), "")
+            if not text:
+                # Almost always the whole budget went into thinking. Name that
+                # rather than letting _extract report it as malformed JSON,
+                # because the fix for the two is completely different.
+                raise RuntimeError(f"no text block (stop_reason={resp.stop_reason})")
             data = _extract(text)
             self.current = Appraisal(
                 narration=str(data.get("narration", ""))[:200],

@@ -1,6 +1,10 @@
-import { openCamera, closeCamera, capture, estimate } from "./ppg.js";
+import { openCamera, closeCamera, capture, estimate, MODE_SCREEN } from "./ppg.js";
 
 const CAPTURE_S = 25;
+// A beat before the clock starts. In screen mode the fingertip has to move to
+// a different lens from the one the intro described, and either way exposure
+// needs a moment to settle once the lamp is on.
+const READY_S = 3;
 const RING = 2 * Math.PI * 52;
 
 const $ = (id) => document.getElementById(id);
@@ -71,12 +75,82 @@ function drawTrace() {
 
 // --- measurement ---------------------------------------------------------
 
+// Where the finger goes is different in every mode, and getting that wrong is
+// the difference between a reading and a shrug. Which one we are in is only
+// known once the camera is open, so this is keyed off what openCamera returns.
+const MODE_COPY = {
+  torch: {
+    where: "Cover the rear lens and the flash with one fingertip.",
+    hold: "Hold still. Keep the lens and the flash fully covered.",
+    warn: false,
+  },
+  screen: {
+    where:
+      "No flash on this phone, so the screen is your lamp. Cover the FRONT lens " +
+      "(top edge of the phone, above the screen) with one fingertip.",
+    hold: "Hold still. Keep the front lens covered and the screen bright.",
+    warn: false,
+  },
+  ambient: {
+    where:
+      "No flash and no front camera. Cover the rear lens and hold it in the " +
+      "brightest light you can find.",
+    hold: "Hold still. Keep the lens fully covered.",
+    warn: true,
+  },
+};
+
+// Screen as lamp. The page goes white so the display itself lights the
+// fingertip, and a wake lock holds the brightness: a phone that auto-dims
+// halfway through a 25 second capture destroys the signal without saying so.
+let wakeLock = null;
+
+async function lampOn() {
+  document.body.classList.add("lamp");
+  window.scrollTo(0, 0);
+  try {
+    wakeLock = navigator.wakeLock ? await navigator.wakeLock.request("screen") : null;
+  } catch {
+    wakeLock = null; // unsupported or refused; the white screen still helps
+  }
+}
+
+async function lampOff() {
+  document.body.classList.remove("lamp");
+  try {
+    if (wakeLock) await wakeLock.release();
+  } catch {
+    /* already released by the browser */
+  }
+  wakeLock = null;
+}
+
+// Short grace period before the capture clock starts, so the instruction on
+// screen has actually been read and acted on.
+function ready(seconds, onTick) {
+  return new Promise((resolve) => {
+    const t0 = performance.now();
+    function tick(now) {
+      const left = seconds - (now - t0) / 1000;
+      if (left <= 0) {
+        resolve();
+        return;
+      }
+      onTick(Math.ceil(left));
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  });
+}
+
 async function measure() {
   show("measure");
   recent.length = 0;
   $("ring-fg").style.strokeDashoffset = RING;
   $("countdown").textContent = CAPTURE_S;
-  $("measure-hint").textContent = "Hold still. Keep the lens fully covered.";
+  $("mode-line").textContent = "Opening the camera.";
+  $("mode-line").classList.remove("bad");
+  $("measure-hint").textContent = "";
   $("measure-hint").classList.remove("bad");
 
   let cam;
@@ -85,33 +159,44 @@ async function measure() {
   } catch (err) {
     show("intro");
     alert(
-      "Camera access was refused. SYNC needs the rear camera to read your pulse.\n\n" +
-        err.message
+      "Camera access was refused. SYNC needs a camera to read your pulse.\n\n" + err.message
     );
     return;
   }
-  if (!cam.torch) {
-    $("measure-hint").textContent =
-      "No flash available. Hold your finger against the lens in bright light.";
-    $("measure-hint").classList.add("bad");
+
+  const copy = MODE_COPY[cam.mode] || MODE_COPY.ambient;
+  $("mode-line").textContent = copy.where;
+  $("mode-line").classList.toggle("bad", copy.warn);
+
+  let trace;
+  try {
+    if (cam.mode === MODE_SCREEN) await lampOn();
+    await ready(READY_S, (n) => {
+      $("measure-hint").textContent = `Starting in ${n}...`;
+    });
+    $("measure-hint").textContent = copy.hold;
+
+    trace = await capture(
+      $("cam"),
+      $("work"),
+      CAPTURE_S,
+      (frac, mean, t) => {
+        $("ring-fg").style.strokeDashoffset = String(RING * (1 - frac));
+        $("countdown").textContent = Math.max(0, Math.ceil(CAPTURE_S - t));
+        recent.push(mean);
+        if (recent.length > 260) recent.shift();
+        drawTrace();
+      },
+      cam.channel
+    );
+  } finally {
+    // However that ended, hand the phone back the way we found it: camera
+    // released, screen back to the dark theme, wake lock dropped.
+    closeCamera(cam.stream);
+    await lampOff();
   }
 
-  const { times, values } = await capture(
-    $("cam"),
-    $("work"),
-    CAPTURE_S,
-    (frac, mean, t) => {
-      $("ring-fg").style.strokeDashoffset = String(RING * (1 - frac));
-      $("countdown").textContent = Math.max(0, Math.ceil(CAPTURE_S - t));
-      recent.push(mean);
-      if (recent.length > 260) recent.shift();
-      drawTrace();
-    }
-  );
-
-  closeCamera(cam.stream);
-
-  const est = estimate(times, values);
+  const est = estimate(trace.times, trace.values);
   pending = est;
   show("result");
   $("bpm").textContent = est.usable ? Math.round(est.bpm) : "--";
@@ -123,7 +208,7 @@ async function measure() {
     $("send").disabled = false;
   } else {
     $("quality").textContent =
-      "Could not find a clean pulse. Press a little more gently and keep the lens fully covered.";
+      `Could not find a clean pulse. ${copy.where} Press gently, hold very still, and try again.`;
     $("quality").classList.add("bad");
     $("send").disabled = true;
   }

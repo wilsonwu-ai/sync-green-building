@@ -1,8 +1,12 @@
 // Photoplethysmography from a phone camera.
 //
-// Finger over the lens with the torch on. Each heartbeat pushes blood through
-// the fingertip and the amount of red light reaching the sensor dips. Average
-// the red channel per frame and you have a pulse waveform.
+// Finger over a lit lens. Each heartbeat pushes blood through the fingertip
+// and the amount of light reaching the sensor dips. Average one colour channel
+// per frame and you have a pulse waveform.
+//
+// Which lens, which lamp and which channel depend on the phone - see the
+// capture section at the bottom. The estimator below does not care: it gets a
+// single scalar per frame either way, and is identical in both modes.
 //
 // Mirrors sync/ppg.py exactly, which is where the algorithm is tested.
 // Autocorrelation, not FFT: at 25 seconds of noisy, motion-corrupted signal it
@@ -152,29 +156,97 @@ export function estimate(times, values, hz = HZ) {
 
 // --- capture -------------------------------------------------------------
 
-export async function openCamera(videoEl) {
-  const stream = await navigator.mediaDevices.getUserMedia({
+// Three ways to light a fingertip. The phone decides which one it can do, and
+// the caller has to say so in the UI, because the finger goes somewhere
+// different in each.
+//
+//   torch    Rear camera, flash on, fingertip over both. Best signal by a
+//            distance, and the RED channel carries it: red is the wavelength
+//            that makes it through a fingertip at all.
+//   screen   Front camera, page driven to white, the display itself as the
+//            lamp. iOS Safari implements no torch constraint, so this is the
+//            path on every iPhone - and at a night demo the old ambient
+//            fallback was close to unusable. Screen light is white and weak,
+//            so the GREEN channel wins: haemoglobin absorbs green hard and
+//            the sensor is most sensitive there.
+//   ambient  No torch, no front camera. Rear lens in whatever light there is.
+//            Last resort only; this is the old behaviour.
+export const MODE_TORCH = "torch";
+export const MODE_SCREEN = "screen";
+export const MODE_AMBIENT = "ambient";
+
+// Byte offset of the channel we average, within each RGBA quad.
+const CHANNEL_RED = 0;
+const CHANNEL_GREEN = 1;
+
+function videoConstraints(facing) {
+  return {
     video: {
-      facingMode: { ideal: "environment" },
+      facingMode: { ideal: facing },
       width: { ideal: 320 },
       height: { ideal: 240 },
       frameRate: { ideal: 30 },
     },
     audio: false,
-  });
+  };
+}
+
+// Feature-detect the torch, never sniff the user agent. Chrome on Android
+// advertises it here; Safari implements getCapabilities but has never listed
+// it. Returns true/false when the device is explicit and null when it says
+// nothing at all - some older Android builds honour the constraint without
+// advertising it, so silence is still worth one attempt.
+function torchCapability(track) {
+  let caps = null;
+  try {
+    caps = track.getCapabilities ? track.getCapabilities() : null;
+  } catch {
+    caps = null; // implemented but throwing; same as not knowing
+  }
+  if (caps && "torch" in caps) return !!caps.torch;
+  return null;
+}
+
+async function attach(videoEl, stream) {
   videoEl.srcObject = stream;
   await videoEl.play();
+}
 
-  const track = stream.getVideoTracks()[0];
+export async function openCamera(videoEl) {
+  // Preferred path: rear camera, flash on, finger over both.
+  const rear = await navigator.mediaDevices.getUserMedia(videoConstraints("environment"));
+  let track = rear.getVideoTracks()[0];
+  await attach(videoEl, rear);
+
   let torch = false;
-  try {
-    await track.applyConstraints({ advanced: [{ torch: true }] });
-    torch = true;
-  } catch {
-    // No torch on this device or the browser refuses. Ambient light still
-    // works if the finger is lit from behind; we surface this in the UI.
+  if (torchCapability(track) !== false) {
+    try {
+      await track.applyConstraints({ advanced: [{ torch: true }] });
+      torch = true;
+    } catch {
+      // A throw means no torch. There is nothing else to read from it.
+    }
   }
-  return { stream, track, torch };
+  if (torch) {
+    return { stream: rear, track, torch: true, mode: MODE_TORCH, channel: CHANNEL_RED };
+  }
+
+  // No flash: switch to the front camera and let the caller turn the page
+  // white, so the screen is the lamp. Phones will not reliably hand out two
+  // camera streams at once, so the rear one has to be released first - which
+  // means that if the front camera then refuses we have to reopen the rear.
+  closeCamera(rear);
+  try {
+    const front = await navigator.mediaDevices.getUserMedia(videoConstraints("user"));
+    track = front.getVideoTracks()[0];
+    await attach(videoEl, front);
+    return { stream: front, track, torch: false, mode: MODE_SCREEN, channel: CHANNEL_GREEN };
+  } catch {
+    const again = await navigator.mediaDevices.getUserMedia(videoConstraints("environment"));
+    track = again.getVideoTracks()[0];
+    await attach(videoEl, again);
+    return { stream: again, track, torch: false, mode: MODE_AMBIENT, channel: CHANNEL_GREEN };
+  }
 }
 
 export function closeCamera(stream) {
@@ -188,7 +260,7 @@ export function closeCamera(stream) {
   }
 }
 
-export function capture(videoEl, canvasEl, seconds, onProgress) {
+export function capture(videoEl, canvasEl, seconds, onProgress, channel = CHANNEL_RED) {
   return new Promise((resolve) => {
     const ctx = canvasEl.getContext("2d", { willReadFrequently: true });
     const W = (canvasEl.width = 48);
@@ -206,9 +278,11 @@ export function capture(videoEl, canvasEl, seconds, onProgress) {
       ctx.drawImage(videoEl, 0, 0, W, H);
       // Centre crop: the edges of the frame catch stray light around the finger.
       const d = ctx.getImageData(W / 4, H / 4, W / 2, H / 2).data;
-      let red = 0;
-      for (let i = 0; i < d.length; i += 4) red += d[i];
-      const mean = red / (d.length / 4);
+      // Red under a torch, green under screen or ambient light. Only the
+      // offset into the RGBA quad changes; the maths downstream is identical.
+      let sum = 0;
+      for (let i = channel; i < d.length; i += 4) sum += d[i];
+      const mean = sum / (d.length / 4);
 
       times.push(t);
       values.push(mean);
