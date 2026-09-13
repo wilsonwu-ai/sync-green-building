@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SYNC - facade</title>
+<style>
+  :root {
+    --bg: #04060b;
+    --ink: #eaf2ff;
+    --dim: #6f819c;
+    --line: #16202f;
+    --breath: #1ab0c4;
+    font-family: ui-sans-serif, -apple-system, system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100dvh; background: var(--bg); color: var(--ink);
+    display: grid; grid-template-columns: minmax(300px, 1fr) minmax(320px, 440px);
+    gap: 30px; padding: 30px; align-items: center;
+  }
+  @media (max-width: 900px) { body { grid-template-columns: 1fr; padding: 18px; } }
+
+  .stage {
+    display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(680px 460px at 50% 88%, #0b1526 0%, transparent 70%);
+    border-radius: 22px; padding: 22px; min-height: 62vh;
+  }
+  canvas#facade { max-width: 100%; max-height: 78vh; image-rendering: auto; }
+
+  h1 { margin: 0 0 2px; font-size: 15px; letter-spacing: .34em; color: var(--dim); font-weight: 600; }
+  h2 { margin: 0 0 12px; font-size: clamp(30px, 4.4vw, 46px); font-weight: 780; line-height: 1.06; }
+  .narration {
+    font-size: 18px; line-height: 1.55; color: #c3d5f0;
+    border-left: 2px solid var(--breath); padding-left: 14px; margin: 0 0 24px; min-height: 56px;
+  }
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 11px; margin-bottom: 18px; }
+  .cell { background: #070c16; border: 1px solid var(--line); border-radius: 13px; padding: 14px 15px; }
+  .cell b { display: block; font-size: 28px; font-weight: 740; font-variant-numeric: tabular-nums; }
+  .cell small { color: var(--dim); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; }
+
+  .phases { display: flex; gap: 6px; margin-bottom: 18px; }
+  .ph {
+    flex: 1; text-align: center; padding: 8px 4px; border-radius: 9px;
+    background: #070c16; border: 1px solid var(--line);
+    font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim);
+  }
+  .ph.on { background: var(--breath); border-color: var(--breath); color: #04060b; font-weight: 750; }
+
+  .delta {
+    background: linear-gradient(135deg, rgba(26,176,196,.17), rgba(255,77,99,.08));
+    border: 1px solid var(--breath); border-radius: 15px; padding: 18px; text-align: center; margin-bottom: 16px;
+  }
+  .delta b { font-size: 44px; font-weight: 820; color: var(--breath); font-variant-numeric: tabular-nums; display: block; }
+  .delta small { color: var(--dim); font-size: 13px; }
+
+  .foot { color: #4d5c73; font-size: 11.5px; line-height: 1.7; }
+  .foot code { color: var(--dim); }
+</style>
+</head>
+<body>
+  <div class="stage"><canvas id="facade" width="540" height="1020"></canvas></div>
+
+  <div>
+    <h1>SYNC</h1>
+    <h2 id="headline">Connecting</h2>
+    <p class="narration" id="narration">&nbsp;</p>
+
+    <div class="phases">
+      <div class="ph" data-p="follow">Follow</div>
+      <div class="ph" data-p="entrain">Entrain</div>
+      <div class="ph" data-p="lead">Lead</div>
+      <div class="ph" data-p="reveal">Reveal</div>
+    </div>
+
+    <div class="grid">
+      <div class="cell"><b id="m-bpm">--</b><small>crowd BPM</small></div>
+      <div class="cell"><b id="m-n">0</b><small>bodies</small></div>
+      <div class="cell"><b id="m-rate">--</b><small>breaths / min</small></div>
+      <div class="cell"><b id="m-coh">--</b><small>coherence</small></div>
+    </div>
+
+    <div class="delta" id="delta" hidden>
+      <b id="d-drop">--</b>
+      <small id="d-cap"></small>
+    </div>
+
+    <p class="foot">
+      153 windows &middot; 17 rows &times; 9 bays &middot; 30 fps<br>
+      display: <code id="f-display">--</code><br>
+      appraisal: <code id="f-appraisal">--</code>
+    </p>
+  </div>
+
+<script type="module" src="/static/preview.js"></script>
+</body>
+</html>
