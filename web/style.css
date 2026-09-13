@@ -144,7 +144,13 @@ h2 { margin: 0 0 10px; font-size: 30px; font-weight: 750; }
 .delta .big { font-size: 42px; font-weight: 800; color: var(--breath); font-variant-numeric: tabular-nums; }
 .delta .cap { color: var(--dim); font-size: 13px; margin-top: 4px; }
 
-.bad { color: var(--warn); }
+/* Degraded-mode warning colour. Doubled class on purpose. Every component that
+   can carry .bad - .hint, .mode-line - is itself a single-class selector, so a
+   single-class .bad only ties with them and the tie is broken by whichever was
+   declared last in this file. .mode-line comes later and silently ate the
+   warning: the one participant in a degraded mode got no warning cue at all.
+   Two classes outrank one, so this now holds wherever the rule sits. */
+.bad.bad { color: var(--warn); }
 
 /* Which lens to cover. Louder than .hint because it is the one instruction a
    participant has to get right, and it changes between phones. */
@@ -175,4 +181,4 @@ body.lamp .card {
 body.lamp .ring-bg { stroke: #d7deea; }
 body.lamp .trace { opacity: 1; }
 body.lamp .fineprint { color: #6b7890; }
-body.lamp .bad { color: #a85f00; }
+body.lamp .bad.bad { color: #a85f00; }

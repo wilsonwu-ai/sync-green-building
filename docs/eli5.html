@@ -133,7 +133,7 @@
       <div class="step">
         <p class="n">STEP 1</p>
         <h3>Your finger is a sensor</h3>
-        <p>Phone torch on, fingertip over the lens. Every heartbeat pushes blood through your finger and <strong>slightly dims the red light</strong> reaching the camera. Count the dips, you have a pulse. No hardware.</p>
+        <p>One fingertip over a lens, lit by whatever lamp the phone has. Every heartbeat pushes blood through your finger and <strong>slightly dims the light</strong> reaching the camera. Count the dips, you have a pulse. No hardware.</p>
       </div>
       <div class="step">
         <p class="n">STEP 2</p>
@@ -146,6 +146,7 @@
         <p>The building slows its breathing to <strong>six breaths a minute</strong> and stops following you. Breathe with a slow rhythm and your heart rate drops. That is the whole trick, and it is measurable.</p>
       </div>
     </div>
+    <p class="note"><b>Which lamp, and which lens, depends on the phone.</b> Android normally exposes a torch, so the rear camera and its flash do the work and the <em>red</em> channel carries the signal - red is the wavelength that gets through a fingertip. <b>iOS Safari implements no torch constraint at all</b>, so on an iPhone SYNC switches to the <em>front</em> camera and drives the page white: the screen is the lamp, and under weak white light the <em>green</em> channel reads best, because haemoglobin absorbs green hard. With neither, it falls back to the rear lens in ambient light - it works, and it is the weakest of the three. The phone tells you which lens to cover before the countdown starts, so there is never a flash to wait for that is not coming.</p>
   </section>
 
   <section style="display:flex;flex-direction:column;gap:22px">
@@ -235,7 +236,12 @@ function frame(t, bpm, breathRate, lead, calm) {
     const dist = Math.abs(r-CHEST)/MAXD;
     const pr = ((hp - dist*0.16) % 1 + 1) % 1;
     const heart = lubdub(pr) * (1 - 0.58*dist);
-    const fill = Math.max(0, Math.min(1, (waterline-r)/1.6 + 0.5));
+    // Lit BELOW the waterline, i.e. rows at a HIGHER index than the surface.
+    // The lung is then full at the top of the inhale and dark at the bottom of
+    // the exhale. Subtracting the other way round inverts the breath: the
+    // tower blazes when the lungs are empty and goes dark when they are full,
+    // which teaches the audience exactly the wrong half of the cycle.
+    const fill = Math.max(0, Math.min(1, (r-waterline)/1.6 + 0.5));
     const edge = Math.exp(-0.5*Math.pow((r-waterline)/1.25, 2));
     const breath = 0.10 + 0.75*fill + 0.45*edge;
     const row = [];

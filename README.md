@@ -10,7 +10,7 @@ Built for [Sundai Hack 140 — *Beyond Tetris: Building-Scale Physical AI*](http
 
 ## ELI5 — thirty seconds
 
-1. **Your finger is a sensor.** Phone torch on, fingertip over the camera. Every heartbeat pushes blood through your finger and slightly dims the red light hitting the lens. Count the dips and you have a heart rate. No hardware, no wearable.
+1. **Your finger is a sensor.** One fingertip over a lens, lit by whatever lamp the phone actually has — the rear flash on most Android phones, the screen itself on every iPhone. Every heartbeat pushes blood through your finger and slightly dims the light reaching the camera. Count the dips and you have a heart rate. No hardware, no wearable.
 2. **The tower wears it.** 153 windows, 9 across and 17 up. The beat starts at the middle floors and travels outward toward the roof and the street, the way a pulse moves through a body.
 3. **Then it takes over.** The building slows its breathing to about six breaths a minute and stops following you. Breathe with a slow rhythm and your heart rate drops. Two minutes later everyone measures again and we put the difference on the screen.
 
@@ -50,7 +50,7 @@ The falsifiable claim we picked: paced breathing at roughly 0.1 Hz — about six
 
 ```mermaid
 flowchart LR
-    P["Phone camera<br/>25s of red channel"]
+    P["Phone camera<br/>25s of one colour channel"]
     C["Crowd<br/>median BPM, coherence"]
     A{"Appraisal<br/>can this crowd be led?"}
     S["Policy<br/>follow to lead"]
@@ -72,8 +72,8 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    A["Torch on, fingertip over the lens"]
-    B["Average the red channel<br/>~30 times a second, for 25 seconds"]
+    A["Pick the lamp the phone has<br/>torch, screen or ambient"]
+    B["Average one channel<br/>~30 times a second, for 25 seconds"]
     C["Detrend<br/>subtract the slow baseline drift"]
     D["Autocorrelation<br/>find the lag that repeats"]
     E["Octave guard<br/>shortest peak within 85% of the best"]
@@ -84,6 +84,16 @@ flowchart TD
     classDef focal fill:#ffe8df,stroke:#eb6c36,stroke-width:2px,color:#2d3142
     class E focal
 ```
+
+**Three ways to light a fingertip, and the phone picks.** `web/ppg.js` feature-detects the torch rather than sniffing the user agent, and the phone page names the lens to cover *before* the countdown starts — because the lens is different in each mode.
+
+| Mode | Lamp and lens | Channel | Why |
+|---|---|---|---|
+| **torch** | rear camera, flash on, one fingertip over both | **red** | Best signal by a distance. Red is the wavelength that makes it through a fingertip at all. |
+| **screen** | front camera, page driven white, wake lock held | **green** | **iOS Safari implements no torch constraint**, so this is the path on every iPhone. Screen light is white and weak; haemoglobin absorbs green hard and the sensor is most sensitive there. |
+| **ambient** | rear camera, no flash, whatever light is in the room | green | Last resort. The page flags it as the weak one. |
+
+The screen path is not a nicety. Without it every iPhone falls through to `ambient` — covering a rear lens at night, waiting for a flash that iOS will never fire — which at a night demo is close to unusable. A wake lock holds the brightness, because a phone that auto-dims halfway through a 25-second capture destroys the signal without saying so.
 
 Autocorrelation rather than an FFT: at 25 seconds of noisy, motion-corrupted signal it degrades gracefully instead of smearing across bins.
 
@@ -139,7 +149,28 @@ As `lead` runs 0 → 1 the weights cross over. **That crossover is the piece:**
 
 ### Step 5 — onto the facade
 
-How the simulator gets delivered on the day is still TBD upstream, so SYNC speaks every shape the repo documents, picked by URL scheme: `ws://` and `tcp://` for remote protocol v1, `py://module:attr` for a legacy `Display` subclass, `none` for preview only. Frames carry the SPEC §9.4 `digest` even though a producer may omit it — a mismatch is the fastest possible way to learn our row order is upside down.
+SYNC speaks every delivery shape the repo documents, picked by URL scheme:
+
+| `--display` | What it drives |
+|---|---|
+| **`gbsim://curious-cat`** | **The Green Building simulator — the only path confirmed against a running server.** One POST per frame to `http://sundai.willsarg.com/api/i/<instance>/frame`, body the bare `[[[r,g,b] ×9] ×17]` array, `204` back. |
+| `gbsim+https://HOST/INSTANCE` | the same simulator, hosted somewhere else |
+| `ws://HOST:9000/tetris-17x9` | remote protocol v1 over WebSocket |
+| `tcp://HOST:9000` | remote protocol v1, newline-delimited |
+| `py://MODULE:ATTR?args=a,b` | a legacy `Display` subclass. The `args=` are its constructor arguments — `gbsim.WebDisplay(instance, api_url)` takes two, and calling `obj()` on it is an immediate `TypeError`. |
+| `none` | preview only (default) |
+
+An `http://` or `https://` URL is accepted as a gbsim endpoint too, with or without the trailing `/frame`, because that is what copying it out of the simulator's address bar gives you. Frames carry the SPEC §9.4 `digest` even though a producer may omit it — a mismatch is the fastest possible way to learn our row order is upside down.
+
+**Do not drive it at 30 FPS.** Measured against the live simulator with a real instance, the viewer's arrival rate saturates near 15 and gets *worse* above it:
+
+| Sent | Arrived | Ratio |
+|---|---|---|
+| 10 fps | 9.1 | 0.91 |
+| 20 fps | 15.2 | 0.76 |
+| 28 fps | **13.4** | 0.48 |
+
+That is congestion collapse: pushing harder delivers less. 30 FPS is the display contract's ceiling, not a target, and a facade driven at 30 looks visibly worse than the same facade driven at 15. `HttpProducer` already drops rather than queues — a late frame is worse than a missing one when the next is 33 ms behind it — and its `max_fps` is where that ceiling is set.
 
 ## R — Result
 
@@ -158,7 +189,7 @@ python -m sync
 
 | | |
 |---|---|
-| Tests | **57 passing** |
+| Tests | **244 passing** — `python -m pytest -q` |
 | Phone estimator vs tested Python reference | agrees to **0.000 BPM** on every fixture, clean and noisy |
 | Server | all routes 200, pulse intake live, out-of-range input rejected with 400 |
 | First frame | validated against the wire contract before anything is sent |
@@ -195,11 +226,15 @@ Two defects that no test could see, both found only by rendering frames and look
 ```bash
 pip install -r requirements.txt
 python -m sync                                        # preview only, port 8080
+python -m sync --display gbsim://curious-cat          # the Green Building simulator
+python -m sync --display gbsim+https://HOST/curious-cat
 python -m sync --display ws://HOST:9000/tetris-17x9   # protocol v1 over WebSocket
 python -m sync --display tcp://HOST:9000              # protocol v1, newline-delimited
-python -m sync --display py://utilities.dummy:DummyDisplay
+python -m sync --display py://gbsim:WebDisplay?args=curious-cat,http://HOST/api
 python -m sync --no-appraisal                         # zero model calls
 ```
+
+`python -m sync --help` prints the whole scheme list, including the measured frame-rate ceiling above.
 
 It prints your LAN address on startup — phones cannot reach `localhost`, so that is the one for the QR code.
 
@@ -220,7 +255,8 @@ sync/crowd.py       many phones -> one body; median, coherence, before/after del
 sync/policy.py      idle -> follow -> entrain -> lead -> reveal
 sync/render.py      the frame producer: heart layer + breath layer, composited
 sync/appraisal.py   the limbic layer (Claude), with a deterministic fallback
-sync/producer.py    ws:// | tcp:// | py:// | none
+sync/producer.py    gbsim:// | ws:// | tcp:// | py:// | none
+sync/gbsim_bin.py   the simulator's own .bin demo format, read and written
 sync/server.py      one process: phone page, pulse intake, 30 FPS render loop
 web/                phone capture UI + the facade preview screen
 docs/eli5.html      the interactive explainer, running the real render maths

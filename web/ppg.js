@@ -169,8 +169,12 @@ export function estimate(times, values, hz = HZ) {
 //            fallback was close to unusable. Screen light is white and weak,
 //            so the GREEN channel wins: haemoglobin absorbs green hard and
 //            the sensor is most sensitive there.
-//   ambient  No torch, no front camera. Rear lens in whatever light there is.
-//            Last resort only; this is the old behaviour.
+//   ambient  No torch, no front camera. Rear lens in whatever room light there
+//            happens to be. Geometrically this is torch mode with a worse lamp
+//            - the light still reaches the sensor THROUGH the fingertip - so it
+//            reads RED, for the same reason torch does. A fingertip passes red
+//            and swallows green, and with no lamp of our own the few green
+//            photons that survive are mostly sensor noise. Last resort only.
 export const MODE_TORCH = "torch";
 export const MODE_SCREEN = "screen";
 export const MODE_AMBIENT = "ambient";
@@ -245,7 +249,7 @@ export async function openCamera(videoEl) {
     const again = await navigator.mediaDevices.getUserMedia(videoConstraints("environment"));
     track = again.getVideoTracks()[0];
     await attach(videoEl, again);
-    return { stream: again, track, torch: false, mode: MODE_AMBIENT, channel: CHANNEL_GREEN };
+    return { stream: again, track, torch: false, mode: MODE_AMBIENT, channel: CHANNEL_RED };
   }
 }
 
@@ -278,8 +282,9 @@ export function capture(videoEl, canvasEl, seconds, onProgress, channel = CHANNE
       ctx.drawImage(videoEl, 0, 0, W, H);
       // Centre crop: the edges of the frame catch stray light around the finger.
       const d = ctx.getImageData(W / 4, H / 4, W / 2, H / 2).data;
-      // Red under a torch, green under screen or ambient light. Only the
-      // offset into the RGBA quad changes; the maths downstream is identical.
+      // Red whenever the light crosses the fingertip to reach the sensor
+      // (torch, ambient), green when the screen is the lamp. Only the offset
+      // into the RGBA quad changes; the maths downstream is identical.
       let sum = 0;
       for (let i = channel; i < d.length; i += 4) sum += d[i];
       const mean = sum / (d.length / 4);
