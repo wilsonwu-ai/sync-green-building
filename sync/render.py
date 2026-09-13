@@ -36,7 +36,11 @@ Rows = tuple[tuple[tuple[int, int, int], ...], ...]
 # channels cross over and cancel - and a facade that desaturates to concrete
 # colour exactly during the transition is the worst possible time to lose it.
 # The violet stop keeps the whole arc saturated.
-BREATH_AGITATED = (255, 96, 40)
+# Breath's hot end is AMBER, not orange-red. It used to sit at (255, 96, 40),
+# which is close enough to the heart's crimson that the two layers merged into
+# one red wash and the beat stopped reading as a discrete event. Separating the
+# hues gives the heartbeat figure against the breath's ground.
+BREATH_AGITATED = (255, 146, 32)
 BREATH_MID = (186, 72, 196)
 BREATH_CALM = (26, 176, 196)
 HEART_AGITATED = (255, 28, 44)
@@ -182,8 +186,13 @@ class Sync:
 
         # The crossover. As the facade takes the lead, the borrowed heartbeat
         # fades and the breath it is teaching takes over.
-        w_heart = 0.90 - 0.55 * e.lead
-        w_breath = 0.45 + 0.50 * e.lead
+        #
+        # The weights are deliberately lopsided at each end rather than a
+        # gentle blend. While following, the breath is held down to a dim bed
+        # so the beat spikes clearly above it; while leading, the lung owns the
+        # tower. A symmetric crossover looked like neither thing.
+        w_heart = 1.10 - 0.75 * e.lead
+        w_breath = 0.26 + 0.69 * e.lead
 
         agitation = 0.16 * (1.0 - calm) * (1.0 - 0.5 * e.coherence)
         gain = 0.35 + 0.65 * e.presence
@@ -194,7 +203,7 @@ class Sync:
 
             # Heart: delayed by distance from the chest, damped as it travels.
             pr = (hp - dist * PULSE_TRAVEL) % 1.0
-            heart = lubdub(pr) * (1.0 - 0.5 * dist)
+            heart = lubdub(pr) * (1.0 - 0.58 * dist)
 
             # Breath: a soft waterline rising and falling through the tower.
             fill = max(0.0, min(1.0, (waterline - r) / FILL_SOFTNESS + 0.5))

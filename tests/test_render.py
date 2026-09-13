@@ -92,6 +92,34 @@ def test_heartbeat_reaches_the_crown_after_the_chest():
     assert chest.index(max(chest)) < head.index(max(head))
 
 
+def test_the_beat_reads_against_the_breath_bed():
+    """While following, the heartbeat must be a visible thump rather than a
+    wash. This is the defect that only showed up by rendering frames and
+    looking at them: with the breath layer sitting too bright underneath, and
+    in too similar a hue, the beat vanished into it. Every other test still
+    passed while the facade was unreadable, so the contrast is pinned here."""
+    s = Sync(
+        Expression(bpm=72, breath_rate=18.0, lead=0.0, calm=0.3,
+                   coherence=0.9, presence=0.9)
+    )
+    chest = [sum(s.render(t)[8][4]) for t in range(25)]  # one cardiac cycle
+    assert max(chest) > 2.2 * max(1, min(chest))
+
+
+def test_following_favours_the_heart_and_leading_favours_the_breath():
+    """The two ends of the arc should look like different things, not like a
+    50/50 blend of the same thing at slightly different weights."""
+    def layers(lead):
+        s = Sync(Expression(bpm=72, breath_rate=6.0, lead=lead, calm=0.5,
+                            coherence=1.0, presence=1.0))
+        vals = [sum(s.render(t)[8][4]) for t in range(25)]
+        return max(vals) - min(vals)  # temporal swing = the beat's visibility
+
+    # 2.0x is a floor, not a fit. The measured separation is ~2.7x; a
+    # symmetric blend of the two layers lands near 1.2x and must fail here.
+    assert layers(0.0) > 2.0 * layers(1.0)
+
+
 def test_lead_crosses_the_layers_over():
     """As the facade takes the lead the borrowed heartbeat must recede."""
     def heart_amplitude(lead):

@@ -1,0 +1,321 @@
+<title>The Building With A Pulse</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* A night installation. This page commits to one visual world on purpose -
+     a building lit against a dark river does not have a light mode - so every
+     colour is painted explicitly and nothing is left to the host ground. */
+  :root {
+    --night:    #06080f;
+    --concrete: #121a26;
+    --edge:     #23303f;
+    --bone:     #e7edf6;
+    --grey:     #7d8da0;
+    --crimson:  #ff2c3f;
+    --cyan:     #1ab0c4;
+    --amber:    #ff9220;
+  }
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--night);
+    color: var(--bone);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 860px;
+    margin: 0 auto;
+    padding-inline: 22px;
+    padding-block: 56px 90px;
+    display: flex;
+    flex-direction: column;
+    gap: 72px;
+  }
+
+  h1, h2, h3 { font-family: "Archivo", ui-sans-serif, system-ui, sans-serif; text-wrap: balance; margin: 0; }
+  h1 { font-size: clamp(40px, 8vw, 76px); font-weight: 800; line-height: 0.98; letter-spacing: -0.03em; }
+  h2 { font-size: clamp(26px, 4.6vw, 38px); font-weight: 700; letter-spacing: -0.02em; }
+  h3 { font-size: 19px; font-weight: 700; }
+  p  { margin: 0; }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--grey); margin: 0;
+  }
+  .lede { font-size: clamp(19px, 2.6vw, 23px); line-height: 1.5; color: var(--bone); max-width: 30ch; }
+  .muted { color: var(--grey); }
+
+  /* --- hero ------------------------------------------------------------ */
+  .hero { display: grid; grid-template-columns: 1fr auto; gap: 40px; align-items: center; }
+  @media (max-width: 720px) { .hero { grid-template-columns: 1fr; } }
+
+  canvas { max-width: 100%; height: auto; display: block; border-radius: 8px; background: #0a0f18; }
+
+  /* --- steps ----------------------------------------------------------- */
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  @media (max-width: 720px) { .steps { grid-template-columns: 1fr; } }
+  .step {
+    background: var(--concrete); border: 1px solid var(--edge); border-radius: 8px;
+    padding: 22px; display: flex; flex-direction: column; gap: 10px;
+  }
+  .step .n {
+    font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: 0.2em;
+    color: var(--grey);
+  }
+  .step p { font-size: 15.5px; line-height: 1.55; color: var(--grey); }
+  .step strong { color: var(--bone); font-weight: 500; }
+
+  /* --- the slider, which is the whole explanation ---------------------- */
+  .demo { background: var(--concrete); border: 1px solid var(--edge); border-radius: 10px; padding: 26px; }
+  .demo-grid { display: grid; grid-template-columns: auto 1fr; gap: 34px; align-items: center; }
+  @media (max-width: 720px) { .demo-grid { grid-template-columns: 1fr; gap: 24px; } }
+
+  .readout { display: flex; flex-direction: column; gap: 20px; }
+  .big {
+    font-family: "Archivo", sans-serif; font-weight: 800; font-size: 46px; line-height: 1;
+    font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+  }
+  .lab { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--grey); margin-top: 5px; }
+
+  input[type=range] { width: 100%; accent-color: var(--cyan); height: 26px; }
+  input[type=range]:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; }
+
+  .ends { display: flex; justify-content: space-between; font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--grey); }
+
+  .bars { display: flex; flex-direction: column; gap: 9px; margin-top: 4px; }
+  .bar-row { display: grid; grid-template-columns: 74px 1fr; gap: 12px; align-items: center; }
+  .bar-row span { font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--grey); }
+  .track { height: 9px; background: #0a0f18; border-radius: 999px; overflow: hidden; }
+  .fill { height: 100%; border-radius: 999px; }
+
+  /* --- grid explainer -------------------------------------------------- */
+  .facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  @media (max-width: 720px) { .facts { grid-template-columns: repeat(2, 1fr); } }
+  .fact { border-left: 2px solid var(--edge); padding-left: 14px; }
+  .fact b { display: block; font-family: "Archivo", sans-serif; font-size: 30px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .fact span { font-family: "IBM Plex Mono", monospace; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--grey); }
+
+  .note {
+    border-left: 2px solid var(--amber); padding: 4px 0 4px 18px;
+    color: var(--grey); font-size: 16px; max-width: 62ch;
+  }
+  .note b { color: var(--bone); font-weight: 500; }
+
+  .prose { display: flex; flex-direction: column; gap: 16px; max-width: 64ch; }
+  .prose p { color: var(--grey); }
+  .prose strong { color: var(--bone); font-weight: 500; }
+
+  footer { border-top: 1px solid var(--edge); padding-top: 22px; font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--grey); }
+  a { color: var(--cyan); }
+
+  @media (prefers-reduced-motion: reduce) { canvas { opacity: 1; } }
+</style>
+
+<div class="wrap">
+
+  <header class="hero">
+    <div style="display:flex;flex-direction:column;gap:20px">
+      <p class="eyebrow">MIT Green Building · 153 windows</p>
+      <h1>The building with a pulse</h1>
+      <p class="lede">You put a finger on your phone camera. A 21&#8209;storey tower starts beating your heart.</p>
+    </div>
+    <canvas id="hero" width="240" height="440" aria-label="A tower of 153 windows beating with a heartbeat"></canvas>
+  </header>
+
+  <section style="display:flex;flex-direction:column;gap:22px">
+    <h2>How it works, in three steps</h2>
+    <div class="steps">
+      <div class="step">
+        <p class="n">STEP 1</p>
+        <h3>Your finger is a sensor</h3>
+        <p>Phone torch on, fingertip over the lens. Every heartbeat pushes blood through your finger and <strong>slightly dims the red light</strong> reaching the camera. Count the dips, you have a pulse. No hardware.</p>
+      </div>
+      <div class="step">
+        <p class="n">STEP 2</p>
+        <h3>The tower wears it</h3>
+        <p>153 windows, 9 across and 17 up. The beat starts at the middle floors and <strong>travels out toward the roof and the street</strong>, like a real pulse moving through a body.</p>
+      </div>
+      <div class="step">
+        <p class="n">STEP 3</p>
+        <h3>Then it takes over</h3>
+        <p>The building slows its breathing to <strong>six breaths a minute</strong> and stops following you. Breathe with a slow rhythm and your heart rate drops. That is the whole trick, and it is measurable.</p>
+      </div>
+    </div>
+  </section>
+
+  <section style="display:flex;flex-direction:column;gap:22px">
+    <h2>Drag the slider. That's the piece.</h2>
+    <p class="muted" style="max-width:60ch">On the left the building is copying you. On the right it is leading you. Watch the red heartbeat fade out as the blue breath takes the tower.</p>
+
+    <div class="demo">
+      <div class="demo-grid">
+        <canvas id="demo" width="200" height="366" aria-label="The facade, changing from heartbeat to breathing as you drag"></canvas>
+        <div class="readout">
+          <div>
+            <div class="big" id="phase" style="color:var(--crimson)">FOLLOWING</div>
+            <div class="lab">what the building is doing</div>
+          </div>
+
+          <div>
+            <label for="lead" class="lab" style="margin:0 0 8px">Lead</label>
+            <input type="range" id="lead" min="0" max="100" value="0" step="1">
+            <div class="ends"><span>copying you</span><span>leading you</span></div>
+          </div>
+
+          <div class="bars">
+            <div class="bar-row">
+              <span>Heartbeat</span>
+              <div class="track"><div class="fill" id="bar-heart" style="background:var(--crimson);width:100%"></div></div>
+            </div>
+            <div class="bar-row">
+              <span>Breath</span>
+              <div class="track"><div class="fill" id="bar-breath" style="background:var(--cyan);width:26%"></div></div>
+            </div>
+          </div>
+
+          <div>
+            <div class="big" id="rate" style="color:var(--cyan)">18.0</div>
+            <div class="lab">breaths per minute it is pacing</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section style="display:flex;flex-direction:column;gap:22px">
+    <h2>Why it looks like this</h2>
+    <div class="facts">
+      <div class="fact"><b>153</b><span>lit windows</span></div>
+      <div class="fact"><b>9&times;17</b><span>bays &times; floors</span></div>
+      <div class="fact"><b>30</b><span>frames per second</span></div>
+      <div class="fact"><b>~500m</b><span>viewing distance</span></div>
+    </div>
+    <div class="prose">
+      <p>153 pixels is not a screen. At that size, seen from across the Charles at night, <strong>text is unreadable, faces are unreadable, video is unreadable</strong>. What survives the distance is colour, vertical movement, and rhythm.</p>
+      <p>Which happens to be exactly the vocabulary a body has. So the grid is treated as an <strong>anatomy, not a display</strong>: nine wide and seventeen tall is a torso. Head at the crown, heart at floor 12, feet at the base.</p>
+    </div>
+    <p class="note"><b>The honest part.</b> Heart rate from a phone camera is reliable. Heart rate <em>variability</em> from a phone camera is not, so the calm score is a rough proxy and is never presented as a medical number.</p>
+  </section>
+
+  <footer>
+    SYNC · Sundai Hack 140 · <a href="https://github.com/wilsonwu-ai/sync-green-building">github.com/wilsonwu-ai/sync-green-building</a>
+  </footer>
+</div>
+
+<script>
+// The same maths the facade runs, ported from sync/render.py so this page
+// shows the real thing rather than an impression of it.
+const ROWS = 17, COLS = 9, CHEST = 8, MAXD = 8;
+const BREATH = [[255,146,32], [186,72,196], [26,176,196]];
+const HEART  = [[255,28,44], [255,96,122]];
+
+const mix = (a,b,t) => { t = Math.max(0,Math.min(1,t)); return a.map((v,i)=>v+(b[i]-v)*t); };
+function ramp(stops,t){ t = Math.max(0,Math.min(1,t))*(stops.length-1);
+  const i = Math.min(Math.floor(t), stops.length-2); return mix(stops[i], stops[i+1], t-i); }
+function cg(p,mu,s){ let d = Math.abs(p-mu); d = Math.min(d, 1-d); return Math.exp(-0.5*(d/s)**2); }
+const lubdub = p => cg(p,0,0.060) + 0.62*cg(p,0.30,0.070);
+function breathLevel(q){ const x = q<0.4 ? q/0.4 : 1-(q-0.4)/0.6;
+  return 0.5 - 0.5*Math.cos(Math.PI*Math.max(0,Math.min(1,x))); }
+const heartProfile = c => 1 - 0.5*Math.pow(Math.abs(c-4)/4, 1.4);
+const breathProfile = c => 1 - 0.20*Math.pow(Math.abs(c-4)/4, 2);
+
+function frame(t, bpm, breathRate, lead, calm) {
+  const hc = 30*60/bpm, bc = 30*60/breathRate;
+  const hp = (t % hc)/hc, bq = (t % bc)/bc;
+  const waterline = (ROWS-1) * (1 - breathLevel(bq));
+  const bRGB = ramp(BREATH, calm), hRGB = mix(HEART[0], HEART[1], calm);
+  const wH = 1.10 - 0.75*lead, wB = 0.26 + 0.69*lead;
+  const out = [];
+  for (let r = 0; r < ROWS; r++) {
+    const dist = Math.abs(r-CHEST)/MAXD;
+    const pr = ((hp - dist*0.16) % 1 + 1) % 1;
+    const heart = lubdub(pr) * (1 - 0.58*dist);
+    const fill = Math.max(0, Math.min(1, (waterline-r)/1.6 + 0.5));
+    const edge = Math.exp(-0.5*Math.pow((r-waterline)/1.25, 2));
+    const breath = 0.10 + 0.75*fill + 0.45*edge;
+    const row = [];
+    for (let c = 0; c < COLS; c++) {
+      const hc2 = heartProfile(c), bc2 = breathProfile(c);
+      row.push([0,1,2].map(i => Math.max(0, Math.min(255,
+        Math.round(hRGB[i]*heart*wH*hc2 + bRGB[i]*breath*wB*bc2)))));
+    }
+    out.push(row);
+  }
+  return out;
+}
+
+function makeTower(canvas) {
+  const ctx = canvas.getContext("2d");
+  const cw = canvas.width, ch = canvas.height;
+  const pad = 10;
+  const cell = Math.floor((cw - pad*2 - (COLS-1)*3) / COLS);
+  const gap = 3;
+  return rows => {
+    ctx.fillStyle = "#0a0f18";
+    ctx.fillRect(0, 0, cw, ch);
+    const th = ROWS*cell + (ROWS-1)*gap;
+    const top = Math.max(pad, (ch - th)/2);
+    ctx.globalCompositeOperation = "lighter";
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const [R,G,B] = rows[r][c];
+        const x = pad + c*(cell+gap), y = top + r*(cell+gap);
+        const lum = (R+G+B)/765;
+        if (lum > 0.03) {
+          const g = ctx.createRadialGradient(x+cell/2, y+cell/2, cell*0.2, x+cell/2, y+cell/2, cell*1.7);
+          g.addColorStop(0, `rgba(${R},${G},${B},${0.45*lum})`);
+          g.addColorStop(1, "rgba(0,0,0,0)");
+          ctx.fillStyle = g;
+          ctx.fillRect(x-cell, y-cell, cell*3, cell*3);
+        }
+        ctx.fillStyle = `rgb(${R},${G},${B})`;
+        ctx.fillRect(x, y, cell, cell);
+      }
+    }
+    ctx.globalCompositeOperation = "source-over";
+  };
+}
+
+const drawHero = makeTower(document.getElementById("hero"));
+const drawDemo = makeTower(document.getElementById("demo"));
+const leadEl = document.getElementById("lead");
+const phaseEl = document.getElementById("phase");
+const rateEl = document.getElementById("rate");
+const barH = document.getElementById("bar-heart");
+const barB = document.getElementById("bar-breath");
+
+function paintControls(lead) {
+  const rate = 18.0 + (6.0 - 18.0)*lead;
+  rateEl.textContent = rate.toFixed(1);
+  barH.style.width = `${Math.round((1.10 - 0.75*lead)/1.10*100)}%`;
+  barB.style.width = `${Math.round((0.26 + 0.69*lead)/0.95*100)}%`;
+  if (lead < 0.2)      { phaseEl.textContent = "FOLLOWING"; phaseEl.style.color = "var(--crimson)"; }
+  else if (lead < 0.8) { phaseEl.textContent = "TAKING OVER"; phaseEl.style.color = "var(--amber)"; }
+  else                 { phaseEl.textContent = "LEADING";   phaseEl.style.color = "var(--cyan)"; }
+}
+
+let t = 0;
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function tick() {
+  const lead = leadEl.valueAsNumber / 100;
+  drawHero(frame(t, 72, 16, 0.15, 0.35));
+  drawDemo(frame(t, 72, 18.0 + (6.0-18.0)*lead, lead, 0.3 + 0.55*lead));
+  t += 1;
+  requestAnimationFrame(tick);
+}
+
+leadEl.addEventListener("input", () => paintControls(leadEl.valueAsNumber / 100));
+paintControls(0);
+
+// Always paint a correct first frame, so the page is right at rest even when
+// motion is off and in any thumbnail.
+drawHero(frame(0, 72, 16, 0.15, 0.35));
+drawDemo(frame(0, 18, 18, 0, 0.3));
+if (!reduced) requestAnimationFrame(tick);
+</script>
