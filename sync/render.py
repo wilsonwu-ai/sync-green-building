@@ -25,7 +25,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from .geometry import COLS, FPS, ROWS, chest_distance
+from .geometry import COLS, FPS, ROWS, VISIBLE_ROWS, chest_distance
 
 Rows = tuple[tuple[tuple[int, int, int], ...], ...]
 
@@ -63,6 +63,7 @@ class Expression:
     coherence: float = 1.0
     presence: float = 0.0
     palette_bias: float = 0.0  # appraisal nudge, -1 warmer .. +1 cooler
+    tree_line: bool = False  # compose for the across-the-river view; see waterline_of
 
 
 def _lerp(a: float, b: float, t: float) -> float:
@@ -131,6 +132,43 @@ def breath_level(q: float) -> float:
     return 0.5 - 0.5 * math.cos(math.pi * max(0.0, min(1.0, x)))
 
 
+def waterline_of(level: float, tree_line: bool = False) -> float:
+    """Where the lung's surface sits, in display-row space, for a 0..1 level.
+
+    Left alone, the surface sweeps the whole tower: row 16 at the bottom of
+    the breath, row 0 at the top. That is the right answer for anyone stood
+    at the foot of the building and the wrong one for the view the piece is
+    actually composed for, because the bottom two rows are behind trees (see
+    geometry.OCCLUDED_ROWS). Two rows out of sixteen is the first and last
+    eighth of every excursion spent where nobody can see it - so from the
+    river the breath appears to hold at the bottom and then start abruptly,
+    and the turnaround at the bottom is precisely the moment a breathing
+    exercise is teaching. Losing it is losing the piece.
+
+    With `tree_line` set, the same excursion is remapped onto the rows that
+    survive the trees, so the surface bottoms out at row 14 rather than 16.
+    Same breath, same timing, same range of brightness - just folded into the
+    part of the facade the audience has.
+
+    The cost is that the two hidden rows stop breathing with the rest. They
+    are hidden; that is the trade, and it is only paid when the flag is set.
+    """
+    span = (VISIBLE_ROWS if tree_line else ROWS) - 1
+    return span * (1.0 - level)
+
+
+def breath_at(row: int, waterline: float) -> float:
+    """The lung's brightness at one row, given where its surface sits.
+
+    The filled body, plus a soft glow on the surface itself - the glow is the
+    part that reads as motion from a quarter mile, which is why the tree line
+    hiding it matters so much more than the two rows of area it costs.
+    """
+    fill = max(0.0, min(1.0, (waterline - row) / FILL_SOFTNESS + 0.5))
+    edge = math.exp(-0.5 * ((row - waterline) / 1.25) ** 2)
+    return 0.10 + 0.75 * fill + 0.45 * edge
+
+
 def _noise(r: int, c: int, k: int) -> float:
     h = (r * 73856093) ^ (c * 19349663) ^ (k * 83492791)
     h = (h ^ (h >> 13)) * 1274126177
@@ -178,7 +216,7 @@ class Sync:
         hp = (t % heart_cycle) / heart_cycle
         bq = (t % breath_cycle) / breath_cycle
         level = breath_level(bq)
-        waterline = (ROWS - 1) * (1.0 - level)
+        waterline = waterline_of(level, e.tree_line)
 
         calm = max(0.0, min(1.0, e.calm + 0.25 * e.palette_bias))
         breath_rgb = _ramp((BREATH_AGITATED, BREATH_MID, BREATH_CALM), calm)
@@ -206,9 +244,7 @@ class Sync:
             heart = lubdub(pr) * (1.0 - 0.58 * dist)
 
             # Breath: a soft waterline rising and falling through the tower.
-            fill = max(0.0, min(1.0, (waterline - r) / FILL_SOFTNESS + 0.5))
-            edge = math.exp(-0.5 * ((r - waterline) / 1.25) ** 2)
-            breath = 0.10 + 0.75 * fill + 0.45 * edge
+            breath = breath_at(r, waterline)
 
             row = []
             for c in range(COLS):

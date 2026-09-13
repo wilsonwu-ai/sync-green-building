@@ -50,3 +50,26 @@ def bay_of(col: int) -> int:
 def chest_distance(row: int) -> float:
     """0.0 at the heart, 1.0 at the furthest floor from it."""
     return abs(row - CHEST_ROW) / MAX_CHEST_DIST
+
+
+# --- the tree line -------------------------------------------------------
+# From across the Charles - the viewpoint this piece is composed for - the
+# trees on the Memorial Drive bank stand in front of the base of the building
+# and hide the bottom two rows of windows. The simulator offers it as a "Real
+# tree line" toggle; on the actual building it is not a toggle, it is just
+# true, and true for most of the audience most of the time.
+#
+# The consequence is a design constraint, not a display detail: anything whose
+# legibility depends on a moving edge has to keep that edge in the rows above
+# the line. This is the one place that number lives.
+OCCLUDED_ROWS = 2
+VISIBLE_ROWS = ROWS - OCCLUDED_ROWS  # 15, i.e. display rows 0..14
+
+
+def occluded_rows() -> tuple[int, ...]:
+    """The display rows the tree line may hide: the bottom OCCLUDED_ROWS.
+
+    Rows 15 and 16, which is floors 5 and 4. Bottom-up occlusion, so this is
+    always a suffix of the row range - never a hole in the middle.
+    """
+    return tuple(range(VISIBLE_ROWS, ROWS))

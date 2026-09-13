@@ -6,9 +6,19 @@ import math
 
 import pytest
 
-from sync.geometry import COLS, N_WINDOWS, ROWS, bay_of, chest_distance, floor_of
+from sync.geometry import (
+    COLS,
+    N_WINDOWS,
+    OCCLUDED_ROWS,
+    ROWS,
+    VISIBLE_ROWS,
+    bay_of,
+    chest_distance,
+    floor_of,
+    occluded_rows,
+)
 from sync.producer import digest, frame_message, validate
-from sync.render import Expression, Sync, breath_level, lubdub
+from sync.render import Expression, Sync, breath_at, breath_level, lubdub, waterline_of
 
 
 def test_facade_is_153_windows():
@@ -156,3 +166,110 @@ def test_validate_rejects_out_of_range():
 def test_validate_rejects_wrong_shape():
     with pytest.raises(ValueError, match="expected 17 rows"):
         validate([[(0, 0, 0)] * COLS] * 5)
+
+
+# --- the tree line -------------------------------------------------------
+# Trees on the river bank hide the bottom two rows from the across-the-river
+# viewpoint the piece is composed for (geometry.OCCLUDED_ROWS). The breath is
+# the layer that cares, because it is the layer with a moving edge. These pin
+# the opt-in remap that keeps that edge where the audience is.
+
+
+def test_tree_line_is_off_by_default_and_changes_nothing():
+    """The remap is opt-in, so that every test above is still measuring the
+    behaviour it was written against."""
+    assert Expression().tree_line is False
+    # The unoccluded waterline is exactly the formula it has always been.
+    assert waterline_of(0.25) == pytest.approx((ROWS - 1) * 0.75, abs=1e-12)
+
+    kw = dict(bpm=72, breath_rate=6.0, lead=0.5, calm=0.4, presence=1.0)
+    default = Sync(Expression(**kw))
+    explicit = Sync(Expression(**kw, tree_line=False))
+    for t in range(0, 600, 3):
+        assert default.render(t) == explicit.render(t)
+
+
+def test_tree_line_keeps_the_whole_breath_above_the_trees():
+    """The defect, stated geometrically. Unoccluded, the lung's surface spends
+    part of every cycle down at rows 15-16, which is behind the trees. With
+    the flag on it bottoms out on the last visible row instead, so both
+    turnarounds happen in view."""
+    assert occluded_rows() == (15, 16)
+    assert VISIBLE_ROWS == ROWS - OCCLUDED_ROWS == 15
+
+    def excursion(tree_line):
+        return [waterline_of(breath_level(i / 900), tree_line) for i in range(900)]
+
+    off, on = excursion(False), excursion(True)
+    assert max(off) == pytest.approx(ROWS - 1)  # row 16, i.e. behind trees
+    assert any(w > VISIBLE_ROWS - 1 for w in off)
+
+    assert not any(w > VISIBLE_ROWS - 1 for w in on)
+    assert min(on) == pytest.approx(0.0, abs=1e-9)
+    assert max(on) == pytest.approx(VISIBLE_ROWS - 1)
+
+
+def test_breath_reaches_both_extremes_inside_the_visible_rows():
+    """Rows 0..14 alone must carry the full dynamic range of the breath layer:
+    the darkest and the brightest the unoccluded facade ever gets are both
+    still reached, and now both reached where they can be seen."""
+
+    def extremes(tree_line, rows):
+        v = [
+            breath_at(r, waterline_of(breath_level(i / 900), tree_line))
+            for i in range(900)
+            for r in rows
+        ]
+        return min(v), max(v)
+
+    lo_all, hi_all = extremes(False, range(ROWS))
+    lo_vis, hi_vis = extremes(True, range(VISIBLE_ROWS))
+    # Measured: 0.10000 / 1.21663 unoccluded across all 17 rows, against
+    # 0.10000 / 1.21660 occlusion-aware across the 15 visible ones.
+    assert lo_vis == pytest.approx(lo_all, abs=1e-3)
+    assert hi_vis == pytest.approx(hi_all, abs=1e-3)
+
+
+def test_the_start_of_the_breath_is_legible_from_the_river():
+    """The motivating defect. The first OCCLUDED_ROWS rows of the surface's
+    travel are an eighth of the excursion, and unoccluded they happen entirely
+    behind the trees - so from the river the breath reads as a dead hold at
+    the bottom followed by a late start. The turnaround at the bottom is the
+    moment a breathing exercise is actually teaching."""
+
+    def opening_move(tree_line):
+        def visible_mean(level):
+            w = waterline_of(level, tree_line)
+            return sum(breath_at(r, w) for r in range(VISIBLE_ROWS)) / VISIBLE_ROWS
+
+        return abs(visible_mean(OCCLUDED_ROWS / (ROWS - 1)) - visible_mean(0.0))
+
+    # Measured: the opening move shifts the visible rows by 4.0% of the full
+    # breath's swing unoccluded, against 8.8% occlusion-aware - a 2.30x
+    # recovery. 1.8x is a floor, not a fit.
+    assert opening_move(True) > 1.8 * opening_move(False)
+
+
+def test_visible_contrast_survives_the_tree_line():
+    """Folding the breath into fifteen rows must not cost it brightness range
+    on real frames: what rows 0..14 swing through with the flag on should
+    match what the whole facade swings through with it off."""
+
+    def swing(tree_line, rows):
+        s = Sync(
+            Expression(bpm=72, breath_rate=6.0, lead=1.0, calm=0.5,
+                       coherence=1.0, presence=1.0, tree_line=tree_line)
+        )
+        series = []
+        for t in range(300):  # one full breath cycle at 6/min, 30fps
+            f = s.render(t)
+            series.append(
+                sum(sum(f[r][c]) for r in rows for c in range(COLS)) / (len(rows) * COLS)
+            )
+        return max(series) - min(series)
+
+    unoccluded = swing(False, range(ROWS))
+    occluded = swing(True, range(VISIBLE_ROWS))
+    # Measured 335.93 against 334.27, a ratio of 1.005.
+    assert occluded > 0.90 * unoccluded
+    assert occluded < 1.15 * unoccluded
