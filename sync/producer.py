@@ -10,6 +10,7 @@ preview:
     tcp://host:port              protocol v1 over newline-delimited TCP
     gbsim://instance             the Green Building simulator, one POST a frame
     gbsim+https://host/instance  the same, somewhere other than the default host
+    http://host/api/i/x/frame    the same endpoint spelled out in full
     py://module:attr?args=a,b    a legacy Display subclass, send()/makeframe()
     none                         preview only
 
@@ -30,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import logging
 import time
@@ -208,7 +210,12 @@ class HttpProducer(Producer):
     one - the next one is 33ms behind it anyway.
 
     A FAILED POST IS NOT AN EXCEPTION. It lands in .status, which the preview
-    screen already shows, and the installation carries on.
+    screen already shows, and the installation carries on. It also lands in
+    the counters: sent + dropped is the number of frames offered, always. A
+    POST that went out and came back refused used to be counted nowhere, so a
+    live run that offered 18 frames read sent=0 dropped=6 and the twelve that
+    failed were missing from the arithmetic entirely - the one number that
+    should have screamed said nothing.
     """
 
     def __init__(self, url: str, max_fps: int = FPS, timeout_s: float = 1.0) -> None:
@@ -216,6 +223,7 @@ class HttpProducer(Producer):
         self.shape: str | None = None  # "bare" | "rows", once the server tells us
         self.sent = 0
         self.dropped = 0
+        self.failed = 0  # the subset of dropped that we POSTed and lost
         self.last_error: str | None = None
         self._min_interval = 1.0 / max_fps
         self._timeout_s = timeout_s  # a POST slower than this is already stale
@@ -258,8 +266,23 @@ class HttpProducer(Producer):
             return ("bare",)  # both were refused once; stop doubling the rate
         return ("bare", "rows")
 
+    def _lost(self) -> None:
+        """A frame we POSTed and did not land.
+
+        It counts as dropped like any other, because sent + dropped has to
+        stay equal to the frames offered or neither number means anything.
+        `failed` then says which kind of loss it was: the rate limiter holding
+        us to the contract is healthy, a server refusing every frame is not,
+        and from the drop count alone those two look identical.
+        """
+        self.dropped += 1
+        self.failed += 1
+
     async def _post(self, body: list) -> None:
-        """Runs off the render loop. Nothing in here may raise into it."""
+        """Runs off the render loop. Nothing in here may raise into it.
+
+        Every exit accounts for the frame exactly once - one sent, or one
+        dropped, never neither and never both."""
         shapes = self._shapes()
         for i, shape in enumerate(shapes):
             payload = body if shape == "bare" else {"rows": body}
@@ -268,6 +291,7 @@ class HttpProducer(Producer):
                     status = resp.status
             except Exception as exc:  # noqa: BLE001 - a dropped frame, not a crash
                 self.last_error = f"{type(exc).__name__}: {exc}"
+                self._lost()
                 return
             if status < 400:
                 if self.shape != shape:
@@ -278,9 +302,13 @@ class HttpProducer(Producer):
                 return
             self.last_error = f"HTTP {status} on the {shape} body"
             if status >= 500:
+                self._lost()
                 return  # a 5xx says nothing about our JSON; do not reshape it
             if i + 1 < len(shapes):
                 self._next_ok += self._min_interval  # the retry is a second POST
+        # Out of shapes to try: this frame is gone, whichever one was refused
+        # last. One frame in, one loss counted, even though it cost two POSTs.
+        self._lost()
         if len(shapes) > 1:
             self._negotiated = True
             log.warning("simulator refused both body shapes: %s", self.last_error)
@@ -304,6 +332,8 @@ class HttpProducer(Producer):
             return f"disconnected ({self.url})"
         body = self.shape or ("bare, refused" if self._negotiated else "bare, unconfirmed")
         out = f"gbsim {self.url} body={body} sent={self.sent} dropped={self.dropped}"
+        if self.failed:  # distinguish "we held the rate" from "nothing landed"
+            out += f" (failed={self.failed})"
         return out if self.last_error is None else f"{out} last={self.last_error}"
 
 
@@ -341,15 +371,8 @@ class LegacyDisplayProducer(Producer):
         if not isinstance(obj, type):
             self._display = obj  # already an instance
             return
-        try:
-            self._display = obj(*self.args)
-        except TypeError as exc:
-            # Name the fix. "missing 2 required positional arguments" in a
-            # traceback at the install is not a useful error message.
-            raise TypeError(
-                f"{self.target} needs constructor arguments; pass them as "
-                f"py://{self.target}?args=a,b  ({exc})"
-            ) from exc
+        _check_ctor_args(obj, self.args, self.target)
+        self._display = obj(*self.args)
 
     async def send(self, frame_no: int, rows, phase: str = "") -> None:
         if self._display is None:
@@ -369,6 +392,30 @@ class LegacyDisplayProducer(Producer):
     def status(self) -> str:
         target = f"{self.target}({', '.join(self.args)})" if self.args else self.target
         return f"legacy {target}" if self._display else f"unloaded ({target})"
+
+
+def _check_ctor_args(obj: type, args: list[str], target: str) -> None:
+    """Name the fix for a display called with the wrong number of arguments.
+    "missing 2 required positional arguments" in a traceback at the install is
+    not a useful error message.
+
+    The check is on the signature and not on `except TypeError` around the
+    call, because that except caught every TypeError the constructor body
+    raised as well. A display whose __init__ does `1 + "one"` was reported as
+    "needs constructor arguments; pass them as ?args=" - sending the operator,
+    at the install, to fix an argument list that was already correct.
+    """
+    try:
+        sig = inspect.signature(obj)
+    except (TypeError, ValueError):
+        return  # no introspectable signature (a C-level type); just let it run
+    try:
+        sig.bind(*args)
+    except TypeError as exc:
+        raise TypeError(
+            f"{target} constructor: {exc}. Pass its arguments as "
+            f"py://{target}?args=a,b"
+        ) from exc
 
 
 def _ctor_args(query: str) -> list[str]:
@@ -404,10 +451,21 @@ def gbsim_url(spec: str) -> str:
         if not host or not instance:
             raise ValueError(f"gbsim spec needs host and instance: {spec!r}")
         return f"{scheme}://{host}/api/i/{instance}/frame"
-    # An explicit URL, for anything the schemes above cannot say. Tolerate the
-    # instance URL without the trailing verb, because that is the one you get
-    # by copying it out of the simulator's address bar.
-    if "/api/i/" in spec and not spec.rstrip("/").endswith("/frame"):
+    # An explicit URL, for anything the schemes above cannot say - but it has
+    # to be a frame endpoint. An http:// spec that names anything else is
+    # almost always a ws:// spec with the wrong scheme typed in front of it,
+    # and passing it through builds a producer that fails on every single
+    # frame while the install reads as healthy. Say so now, at startup, where
+    # someone is still watching. Tolerate only the missing trailing verb,
+    # because that is the URL you get by copying it out of the address bar.
+    instance = spec.partition("/api/i/")[2].strip("/").partition("/")[0]
+    if not instance:
+        raise ValueError(
+            f"not a simulator frame endpoint: {spec!r}; expected "
+            f"<origin>/api/i/<instance>/frame, gbsim://<instance> or "
+            f"gbsim+https://<host>/<instance> (a WebSocket display is ws://)"
+        )
+    if not spec.rstrip("/").endswith("/frame"):
         return spec.rstrip("/") + "/frame"
     return spec
 

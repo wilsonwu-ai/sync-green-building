@@ -150,8 +150,10 @@ def waterline_of(level: float, tree_line: bool = False) -> float:
     Same breath, same timing, same range of brightness - just folded into the
     part of the facade the audience has.
 
-    The cost is that the two hidden rows stop breathing with the rest. They
-    are hidden; that is the trade, and it is only paid when the flag is set.
+    The cost is that the two hidden rows stop breathing with the rest: the
+    surface never descends to them, so they sit permanently below it and read
+    as filled base. They are hidden; that is the trade, and it is only paid
+    when the flag is set.
     """
     span = (VISIBLE_ROWS if tree_line else ROWS) - 1
     return span * (1.0 - level)
@@ -163,8 +165,17 @@ def breath_at(row: int, waterline: float) -> float:
     The filled body, plus a soft glow on the surface itself - the glow is the
     part that reads as motion from a quarter mile, which is why the tree line
     hiding it matters so much more than the two rows of area it costs.
+
+    The sign is the whole thing, and it is the one that bit us: row 0 is the
+    CROWN and row 16 is the BASE (geometry.floor_of), so the body of water is
+    the rows with an index GREATER than the waterline, not smaller. Written the
+    other way round - `(waterline - row)` - the facade is brightest with the
+    lung empty and the lit region descends from the roof, which is a drain, not
+    a breath. Every contrast- or swing-based test stays green through that
+    inversion because |max - min| cannot see a sign, so the direction is
+    pinned explicitly in tests/test_render.py.
     """
-    fill = max(0.0, min(1.0, (waterline - row) / FILL_SOFTNESS + 0.5))
+    fill = max(0.0, min(1.0, (row - waterline) / FILL_SOFTNESS + 0.5))
     edge = math.exp(-0.5 * ((row - waterline) / 1.25) ** 2)
     return 0.10 + 0.75 * fill + 0.45 * edge
 

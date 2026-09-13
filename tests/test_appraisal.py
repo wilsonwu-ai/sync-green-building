@@ -10,12 +10,17 @@ a green suite to be hiding an unpaid API call."""
 
 import asyncio
 import contextlib
+import importlib.util
+import logging
+import sys
 import time
+from unittest import mock
 
 import anthropic
 import httpx
 import pytest
 
+import sync.appraisal
 from sync.appraisal import (
     MAX_TOKENS,
     MODEL,
@@ -23,6 +28,7 @@ from sync.appraisal import (
     Appraiser,
     _extract,
     _fallback,
+    _reap,
 )
 
 
@@ -200,7 +206,15 @@ def test_extract_raises_on_malformed_json_between_braces():
 def test_the_request_is_shaped_for_the_current_api():
     """Pins the three things that would silently disable this path if the API
     moved under us: the model id, effort nested inside output_config rather
-    than sent top-level, and a max_tokens with room for Opus 5's thinking."""
+    than sent top-level, and a max_tokens with room for Opus 5's thinking.
+
+    All three are pinned against literals, the same way the model id already
+    was. `kw["max_tokens"] == MAX_TOKENS` on its own asserts nothing - both
+    sides are the same constant, so it holds for any value the module happens
+    to define, including a budget of 1 that guarantees every reply is thinking
+    truncated with no text block. A test that passes for every possible value
+    of the thing it names is worse than no test, because it reads as coverage.
+    The literal is the part that has to be updated deliberately."""
     c = _FakeClient(reply=_Reply(GOOD))
     a = _appraiser(c)
     asyncio.run(a._refresh(_Snap(n=6, coherence=0.9), _Pacing()))
@@ -208,7 +222,7 @@ def test_the_request_is_shaped_for_the_current_api():
     kw = c.messages.kwargs
     assert kw["model"] == MODEL == "claude-opus-5"
     assert kw["output_config"] == {"effort": "low"}
-    assert kw["max_tokens"] == MAX_TOKENS
+    assert kw["max_tokens"] == MAX_TOKENS == 2000
     assert kw["messages"][0]["role"] == "user"
     assert kw["system"]
 
@@ -362,12 +376,25 @@ def test_maybe_refresh_never_starts_a_second_call_while_one_is_in_flight():
 
 
 def test_maybe_refresh_honours_the_cadence_once_a_call_has_landed():
+    """The cadence gate is the spend gate. Without it the render loop bills one
+    paid request per frame - thirty a second, for the length of the show.
+
+    The `await asyncio.sleep(0)` below is load-bearing and must not be tidied
+    away. A task that has been created but not yet scheduled has not touched the
+    client, so asserting the call count the instant maybe_refresh() returns
+    passes whether or not the gate exists - the assertion cannot fail. The yield
+    lets a task that should never have been created get as far as the API and be
+    counted."""
     async def scenario():
         c = _FakeClient(reply=_Reply(GOOD))
         a = _appraiser(c, cadence_s=100.0)
         a.maybe_refresh(_Snap(n=6), _Pacing())
-        await a._task
+        first = a._task
+        await first
+
         a.maybe_refresh(_Snap(n=6), _Pacing())
+        await asyncio.sleep(0)
+        assert a._task is first, "the cadence gate let a second task through"
         assert c.messages.calls == 1
 
     asyncio.run(scenario())
@@ -395,3 +422,125 @@ def test_maybe_refresh_outside_an_event_loop_falls_back_instead_of_raising():
     a.maybe_refresh(_Snap(n=6, coherence=0.9), _Pacing())  # must not raise
     assert a.current.source == "fallback"
     assert a.last_error == "no running event loop"
+
+
+# --- _reap: the fire-and-forget task's only listener ----------------------
+
+def test_a_task_that_dies_is_reaped_and_logged(caplog):
+    """_refresh swallows its own failures, so a task that raises anyway is a
+    shape nobody predicted. Without the done-callback its exception is never
+    retrieved: silent while it matters, then dumped by the interpreter at exit,
+    long after the show, attached to nothing anyone can act on."""
+    async def scenario():
+        a = _appraiser(_FakeClient(reply=_Reply(GOOD)), cadence_s=0.0)
+
+        async def detonate(snap, pacing):
+            raise ZeroDivisionError("limbic")
+
+        a._refresh = detonate  # set on the instance, so create_task picks it up
+
+        with caplog.at_level(logging.WARNING, logger="sync.appraisal"):
+            a.maybe_refresh(_Snap(n=6), _Pacing())
+            # _reap was attached before this await added its own callback, and
+            # done-callbacks run in the order they were added, so by the time
+            # this resumes _reap has already had its turn.
+            with pytest.raises(ZeroDivisionError):
+                await a._task
+
+        assert "appraisal task died" in caplog.text
+        assert "ZeroDivisionError" in caplog.text
+
+    asyncio.run(scenario())
+
+
+def test_reap_stays_quiet_about_a_cancelled_task(caplog):
+    """task.exception() re-raises CancelledError rather than returning it, so
+    the cancelled check is not tidiness. Dropping it turns an ordinary shutdown
+    into an exception raised inside a done-callback, where there is no caller
+    left to catch it."""
+    async def scenario():
+        task = asyncio.get_running_loop().create_task(asyncio.sleep(3600))
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        with caplog.at_level(logging.WARNING, logger="sync.appraisal"):
+            _reap(task)  # must not raise
+
+        assert "appraisal task died" not in caplog.text
+
+    asyncio.run(scenario())
+
+
+def test_reap_stays_quiet_about_a_task_that_finished_cleanly(caplog):
+    """The ordinary path runs through _reap on every single refresh. If it
+    logged there, twenty seconds of show would fill the console with warnings
+    about nothing being wrong."""
+    async def scenario():
+        a = _appraiser(_FakeClient(reply=_Reply(GOOD)), cadence_s=0.0)
+        with caplog.at_level(logging.WARNING, logger="sync.appraisal"):
+            a.maybe_refresh(_Snap(n=6, coherence=0.9), _Pacing())
+            await a._task
+
+        assert a.current.source == "claude"
+        assert "appraisal task died" not in caplog.text
+
+    asyncio.run(scenario())
+
+
+# --- the SDK itself being missing ----------------------------------------
+
+def _appraisal_module_without_the_sdk():
+    """A second, private copy of sync/appraisal.py loaded with `import
+    anthropic` failing, the way it fails on a machine where the SDK was never
+    installed or the install is broken.
+
+    Loaded under its own name and never left behind in sys.modules, so the real
+    module that every other test in this file imported is untouched."""
+    spec = importlib.util.spec_from_file_location(
+        "sync_appraisal_without_sdk", sync.appraisal.__file__
+    )
+    mod = importlib.util.module_from_spec(spec)
+    with mock.patch.dict(sys.modules, {"anthropic": None}):
+        # dataclasses resolves cls.__module__ through sys.modules while the
+        # module body is still executing, so the module has to be registered
+        # for @dataclass to run at all. patch.dict takes the entry back out.
+        sys.modules["sync_appraisal_without_sdk"] = mod
+        spec.loader.exec_module(mod)
+    return mod
+
+
+def test_the_error_clauses_survive_the_sdk_being_absent():
+    """Written as `except anthropic.AuthenticationError`, every one of these
+    clauses raises AttributeError on a None module *while handling the original
+    error* - so an ordinary API failure stops being a fallback and becomes a
+    dead task. Moving the import to module scope changed the exception type
+    from NameError to AttributeError and nothing else; binding the classes up
+    front is what actually fixes it."""
+    mod = _appraisal_module_without_the_sdk()
+    assert mod.anthropic is None
+    assert "sync_appraisal_without_sdk" not in sys.modules
+
+    a = mod.Appraiser(enabled=False)
+    a._client = _FakeClient(exc=RuntimeError("boom"))
+    a.available = True
+    asyncio.run(a._refresh(_Snap(n=6, coherence=0.9), _Pacing()))
+
+    assert a.current.source == "fallback"
+    assert a.current.headline == "Taking over"  # still expressive, not blank
+    assert "RuntimeError" in a.last_error
+
+
+def test_with_no_sdk_the_constructor_is_what_actually_disables_the_path():
+    """Why the clauses above are belt-and-braces rather than a live bug: with
+    no SDK the client is never built, available stays False, and maybe_refresh
+    takes the fallback branch without scheduling anything. enabled=True is safe
+    here for exactly that reason - `anthropic` is None, so there is nothing to
+    construct and no credential lookup to reach the network."""
+    mod = _appraisal_module_without_the_sdk()
+    a = mod.Appraiser(enabled=True)
+    assert a.available is False
+    assert "AttributeError" in a.last_error
+
+    a.maybe_refresh(_Snap(n=6, coherence=0.9), _Pacing())
+    assert a.current.source == "fallback"

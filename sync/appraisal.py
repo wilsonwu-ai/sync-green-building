@@ -42,6 +42,26 @@ try:
 except Exception:  # noqa: BLE001 - a broken SDK install must not stop the show
     anthropic = None
 
+
+class _NeverRaised(Exception):
+    """Stands in for an SDK exception class when there is no SDK. Nothing ever
+    constructs it, so the clause it guards is simply never taken."""
+
+
+# Bound here, once, instead of written as `except anthropic.AuthenticationError`
+# at the catch site. Moving the import to module scope stopped the unbound-name
+# NameError but did NOT fix the underlying failure: with no SDK the name is
+# None, and evaluating `None.AuthenticationError` raises AttributeError *while
+# handling the original error* - the same task-killing shape wearing a
+# different exception type. A name that is already a class cannot do that.
+if anthropic is not None:
+    _AUTH_ERROR = anthropic.AuthenticationError
+    _RATE_LIMIT_ERROR = anthropic.RateLimitError
+    _API_STATUS_ERROR = anthropic.APIStatusError
+    _CONNECTION_ERROR = anthropic.APIConnectionError
+else:
+    _AUTH_ERROR = _RATE_LIMIT_ERROR = _API_STATUS_ERROR = _CONNECTION_ERROR = _NeverRaised
+
 log = logging.getLogger("sync.appraisal")
 
 MODEL = "claude-opus-5"
@@ -149,6 +169,14 @@ class Appraiser:
             # Resolves ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, or an
             # `ant auth login` profile. A missing env var is not a missing
             # credential, so we construct and let the first call decide.
+            #
+            # This line is also why the no-SDK case never reaches _refresh in
+            # production: with `anthropic` None it raises AttributeError here,
+            # available stays False, and no task is ever scheduled. The error
+            # classes above are still bound defensively rather than left as
+            # attribute lookups on None - `available` is a plain public
+            # attribute, and anything that sets it (the tests do) walks
+            # straight past this guard.
             self._client = anthropic.AsyncAnthropic()
             self.available = True
         except Exception as exc:  # noqa: BLE001 - never fail the installation
@@ -219,18 +247,20 @@ class Appraiser:
                 source="claude",
             )
             self.last_error = None
-        except anthropic.AuthenticationError as exc:
+        # Auth and rate-limit are subclasses of APIStatusError, so they have to
+        # be named before it or they never get their own clause.
+        except _AUTH_ERROR as exc:
             self.available = False
             self.last_error = f"auth: {exc}"
             log.warning("appraisal auth failed, falling back permanently: %s", exc)
             self.current = _fallback(snap, pacing)
-        except anthropic.RateLimitError as exc:
+        except _RATE_LIMIT_ERROR as exc:
             self.last_error = f"rate limited: {exc}"
             self.current = _fallback(snap, pacing)
-        except anthropic.APIStatusError as exc:
+        except _API_STATUS_ERROR as exc:
             self.last_error = f"api {exc.status_code}"
             self.current = _fallback(snap, pacing)
-        except anthropic.APIConnectionError as exc:
+        except _CONNECTION_ERROR as exc:
             self.last_error = f"network: {exc}"
             self.current = _fallback(snap, pacing)
         except Exception as exc:  # noqa: BLE001
